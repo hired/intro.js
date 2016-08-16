@@ -350,6 +350,8 @@
    * @method _nextStep
    */
   function _nextStep() {
+    if (this._hasExited) return;
+
     this._direction = 'forward';
 
     if (typeof (this._currentStep) === 'undefined') {
@@ -383,6 +385,8 @@
    * @method _nextStep
    */
   function _previousStep() {
+    if (this._hasExited) return;
+
     this._direction = 'backward';
 
     if (this._currentStep === 0) {
@@ -466,6 +470,8 @@
 
     //set the step to zero
     this._currentStep = undefined;
+
+    this._hasExited = true;
   }
 
   /**
@@ -1686,6 +1692,7 @@
       return this;
     },
     start: function () {
+      this._hasExited = false;
       _introForElement.call(this, this._targetElement);
       return this;
     },
