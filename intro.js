@@ -1,8 +1,8 @@
 /**
- * Intro.js v2.2.0
+ * Intro.js v2.8.0-alpha.1
  * https://github.com/usablica/intro.js
  *
- * Copyright (C) 2016 Afshin Mehrabani (@afshinmeh)
+ * Copyright (C) 2017 Afshin Mehrabani (@afshinmeh)
  */
 
 (function (root, factory) {
@@ -18,7 +18,7 @@
   }
 } (this, function (exports) {
   //Default config/variables
-  var VERSION = '2.2.0';
+  var VERSION = '2.8.0-alpha.1';
 
   /**
    * IntroJs main class
@@ -38,6 +38,10 @@
       skipLabel: 'Skip',
       /* Done button label in tooltip box */
       doneLabel: 'Done',
+      /* Hide previous button in the first step? Otherwise, it will be disabled button. */
+      hidePrev: false,
+      /* Hide next button in the last step? Otherwise, it will be disabled button. */
+      hideNext: false,
       /* Default tooltip box position */
       tooltipPosition: 'bottom',
       /* Next CSS class for tooltip boxes */
@@ -60,10 +64,16 @@
       showProgress: false,
       /* Scroll to highlighted element? */
       scrollToElement: true,
-      /* Set the overlay opacity */
-      overlayOpacity: 0.8,
+      /*
+       * Should we scroll the tooltip or target element?
+       *
+       * Options are: 'element' or 'tooltip'
+       */
+      scrollTo: 'element',
       /* Padding to add after scrolling when element is not in the viewport (in pixels) */
       scrollPadding: 30,
+      /* Set the overlay opacity */
+      overlayOpacity: 0.8,
       /* Precedence of positions, when auto is enabled */
       positionPrecedence: ["bottom", "top", "right", "left"],
       /* Disable an interaction with element? */
@@ -149,11 +159,35 @@
       //use steps passed programmatically
       for (var i = 0, stepsLength = this._options.steps.length; i < stepsLength; i++) {
         var currentItem = _cloneObject(this._options.steps[i]);
+
         //set the step
         currentItem.step = introItems.length + 1;
+
         //use querySelector function only when developer used CSS selector
-        if (typeof(currentItem.element) === 'string' || currentItem.element == null) {
+        if (typeof (currentItem.element) === 'string' || currentItem.element == null) {
+          //grab the element with given selector from the page
           currentItem = _createDynamicElementForIntroItem(currentItem);
+        }
+
+        //intro without element
+        if (typeof (currentItem.element) === 'undefined' || currentItem.element == null) {
+          var floatingElementQuery = document.querySelector(".introjsFloatingElement");
+
+          if (floatingElementQuery == null) {
+            floatingElementQuery = document.createElement('div');
+            floatingElementQuery.className = 'introjsFloatingElement';
+
+            document.body.appendChild(floatingElementQuery);
+          }
+
+          currentItem.element  = floatingElementQuery;
+          currentItem.position = 'floating';
+        }
+
+        currentItem.scrollTo = currentItem.scrollTo || this._options.scrollTo;
+
+        if (typeof (currentItem.disableInteraction) === 'undefined') {
+          currentItem.disableInteraction = this._options.disableInteraction;
         }
 
         if (currentItem.element != null) {
@@ -180,6 +214,12 @@
 
         var step = parseInt(currentElement.getAttribute('data-step'), 10);
 
+        var disableInteraction = this._options.disableInteraction;
+
+        if (typeof (currentElement.getAttribute('data-disable-interaction')) != 'undefined') {
+          disableInteraction = !!currentElement.getAttribute('data-disable-interaction');
+        }
+
         if (step > 0) {
           introItems[step - 1] = {
             element: currentElement,
@@ -187,7 +227,9 @@
             step: parseInt(currentElement.getAttribute('data-step'), 10),
             tooltipClass: currentElement.getAttribute('data-tooltipClass'),
             highlightClass: currentElement.getAttribute('data-highlightClass'),
-            position: currentElement.getAttribute('data-position') || this._options.tooltipPosition
+            position: currentElement.getAttribute('data-position') || this._options.tooltipPosition,
+            scrollTo: currentElement.getAttribute('data-scrollTo') || this._options.scrollTo,
+            disableInteraction: disableInteraction
           };
         }
       }
@@ -208,13 +250,21 @@
             }
           }
 
+          var disableInteraction = this._options.disableInteraction;
+
+          if (typeof (currentElement.getAttribute('data-disable-interaction')) != 'undefined') {
+            disableInteraction = !!currentElement.getAttribute('data-disable-interaction');
+          }
+
           introItems[nextStep] = {
             element: currentElement,
             intro: currentElement.getAttribute('data-intro'),
             step: nextStep + 1,
             tooltipClass: currentElement.getAttribute('data-tooltipClass'),
             highlightClass: currentElement.getAttribute('data-highlightClass'),
-            position: currentElement.getAttribute('data-position') || this._options.tooltipPosition
+            position: currentElement.getAttribute('data-position') || this._options.tooltipPosition,
+            scrollTo: currentElement.getAttribute('data-scrollTo') || this._options.scrollTo,
+            disableInteraction: disableInteraction
           };
         }
       }
@@ -248,9 +298,6 @@
         if (e.keyCode === 27 && self._options.exitOnEsc == true) {
           //escape key pressed, exit the intro
           //check if exit callback is defined
-          if (self._introExitCallback != undefined) {
-            self._introExitCallback.call(self);
-          }
           _exitIntro.call(self, targetElm);
         } else if(e.keyCode === 37) {
           //left arrow
@@ -269,10 +316,7 @@
             if (self._introItems.length - 1 == self._currentStep && typeof (self._introCompleteCallback) === 'function') {
                 self._introCompleteCallback.call(self);
             }
-            //check if any callback is defined
-            if (self._introExitCallback != undefined) {
-              self._introExitCallback.call(self);
-            }
+
             _exitIntro.call(self, targetElm);
           } else {
             //default behavior for responding to enter
@@ -289,8 +333,7 @@
       };
 
       self._onResize = function(e) {
-        _setHelperLayerPosition.call(self, document.querySelector('.introjs-helperLayer'));
-        _setHelperLayerPosition.call(self, document.querySelector('.introjs-tooltipReferenceLayer'));
+        self.refresh.call(self);
       };
 
       if (window.addEventListener) {
@@ -344,6 +387,19 @@
   }
 
   /**
+   * Go to the specific step of introduction with the explicit [data-step] number
+   *
+   * @api private
+   * @method _goToStepNumber
+   */
+  function _goToStepNumber(step) {
+    this._currentStepNumber = step;
+    if (typeof (this._introItems) !== 'undefined') {
+      _nextStep.call(this);
+    }
+  }
+
+  /**
    * Go to next step on intro
    *
    * @api private
@@ -354,10 +410,30 @@
 
     this._direction = 'forward';
 
+    if (typeof (this._currentStepNumber) !== 'undefined') {
+        for( var i = 0, len = this._introItems.length; i < len; i++ ) {
+            var item = this._introItems[i];
+            if( item.step === this._currentStepNumber ) {
+                this._currentStep = i - 1;
+                this._currentStepNumber = undefined;
+            }
+        }
+    }
+
     if (typeof (this._currentStep) === 'undefined') {
       this._currentStep = 0;
     } else {
       ++this._currentStep;
+    }
+
+    if (typeof (this._introBeforeChangeCallback) !== 'undefined') {
+      var continueStep = this._introBeforeChangeCallback.call(this);
+    }
+
+    // if `onbeforechange` returned `false`, stop displaying the element
+    if (continueStep === false) {
+      --this._currentStep;
+      return false;
     }
 
     if ((this._introItems.length) <= this._currentStep) {
@@ -371,10 +447,6 @@
     }
 
     var nextStep = this._introItems[this._currentStep];
-    if (typeof (this._introBeforeChangeCallback) !== 'undefined') {
-      this._introBeforeChangeCallback.call(this, nextStep.element);
-    }
-
     _showElement.call(this, nextStep);
   }
 
@@ -382,7 +454,7 @@
    * Go to previous step on intro
    *
    * @api private
-   * @method _nextStep
+   * @method _previousStep
    */
   function _previousStep() {
     if (this._hasExited) return;
@@ -393,12 +465,43 @@
       return false;
     }
 
-    var nextStep = this._introItems[--this._currentStep];
+    --this._currentStep;
+
     if (typeof (this._introBeforeChangeCallback) !== 'undefined') {
-      this._introBeforeChangeCallback.call(this, nextStep.element);
+      var continueStep = this._introBeforeChangeCallback.call(this);
     }
 
+    // if `onbeforechange` returned `false`, stop displaying the element
+    if (continueStep === false) {
+      ++this._currentStep;
+      return false;
+    }
+
+    var nextStep = this._introItems[this._currentStep];
     _showElement.call(this, nextStep);
+  }
+
+  /**
+   * Update placement of the intro objects on the screen
+   * @api private
+   */
+  function _refresh() {
+    // re-align intros
+    _setHelperLayerPosition.call(this, document.querySelector('.introjs-helperLayer'));
+    _setHelperLayerPosition.call(this, document.querySelector('.introjs-tooltipReferenceLayer'));
+    _setHelperLayerPosition.call(this, document.querySelector('.introjs-disableInteraction'));
+
+    // re-align tooltip
+    if(this._currentStep !== undefined && this._currentStep !== null) {
+      var oldHelperNumberLayer = document.querySelector('.introjs-helperNumberLayer'),
+        oldArrowLayer        = document.querySelector('.introjs-arrow'),
+        oldtooltipContainer  = document.querySelector('.introjs-tooltip');
+      _placeTooltip.call(this, this._introItems[this._currentStep].element, oldtooltipContainer, oldArrowLayer, oldHelperNumberLayer);
+    }
+
+    //re-align hints
+    _reAlignHints.call(this);
+    return this;
   }
 
   /**
@@ -407,23 +510,37 @@
    * @api private
    * @method _exitIntro
    * @param {Object} targetElement
+   * @param {Boolean} force - Setting to `true` will skip the result of beforeExit callback
    */
-  function _exitIntro(targetElement) {
-    //remove overlay layer from the page
-    var overlayLayer = targetElement.querySelector('.introjs-overlay');
+  function _exitIntro(targetElement, force) {
+    var continueExit = true;
 
-    //return if intro already completed or skipped
-    if (overlayLayer == null) {
-      return;
+    // calling onbeforeexit callback
+    //
+    // If this callback return `false`, it would halt the process
+    if (this._introBeforeExitCallback != undefined) {
+      continueExit = this._introBeforeExitCallback.call(self);
     }
 
-    //for fade-out animation
-    overlayLayer.style.opacity = 0;
-    setTimeout(function () {
-      if (overlayLayer.parentNode) {
-        overlayLayer.parentNode.removeChild(overlayLayer);
-      }
-    }, 500);
+    // skip this check if `force` parameter is `true`
+    // otherwise, if `onbeforeexit` returned `false`, don't exit the intro
+    if (!force && continueExit === false) return;
+
+    //remove overlay layers from the page
+    var overlayLayers = targetElement.querySelectorAll('.introjs-overlay');
+
+    if (overlayLayers && overlayLayers.length > 0) {
+      for (var i = overlayLayers.length - 1; i >= 0; i--) {
+        //for fade-out animation
+        var overlayLayer = overlayLayers[i];
+        overlayLayer.style.opacity = 0;
+        setTimeout(function () {
+          if (this.parentNode) {
+            this.parentNode.removeChild(this);
+          }
+        }.bind(overlayLayer), 500);
+      };
+    }
 
     //remove all helper layers
     var helperLayer = targetElement.querySelector('.introjs-helperLayer');
@@ -435,6 +552,7 @@
     if (referenceLayer) {
       referenceLayer.parentNode.removeChild(referenceLayer);
     }
+
     //remove disableInteractionLayer
     var disableInteractionLayer = targetElement.querySelector('.introjs-disableInteraction');
     if (disableInteractionLayer) {
@@ -447,11 +565,7 @@
       floatingElement.parentNode.removeChild(floatingElement);
     }
 
-    //remove `introjs-showElement` class from the element
-    var showElement = document.querySelector('.introjs-showElement');
-    if (showElement) {
-      showElement.className = showElement.className.replace(/introjs-[a-zA-Z]+/g, '').replace(/^\s+|\s+$/g, ''); // This is a manual trim.
-    }
+    _removeShowElement();
 
     //remove `introjs-fixParent` class from the elements
     var fixParents = document.querySelectorAll('.introjs-fixParent');
@@ -466,6 +580,11 @@
       window.removeEventListener('keydown', this._onKeyDown, true);
     } else if (document.detachEvent) { //IE
       document.detachEvent('onkeydown', this._onKeyDown);
+    }
+
+    //check if any callback is defined
+    if (this._introExitCallback != undefined) {
+      this._introExitCallback.call(self);
     }
 
     //set the step to zero
@@ -524,11 +643,15 @@
     tooltipLayer.className = ('introjs-tooltip ' + tooltipCssClass).replace(/^\s+|\s+$/g, '');
 
     currentTooltipPosition = this._introItems[this._currentStep].position;
-    if ((currentTooltipPosition == "auto" || this._options.tooltipPosition == "auto")) {
-      if (currentTooltipPosition != "floating") { // Floating is always valid, no point in calculating
+
+    if (currentTooltipPosition != "floating") { // Floating is always valid, no point in calculating
+      if (currentTooltipPosition === "auto") {
+        currentTooltipPosition = _determineAutoPosition.call(this, targetElement, tooltipLayer);
+      } else {
         currentTooltipPosition = _determineAutoPosition.call(this, targetElement, tooltipLayer, currentTooltipPosition);
       }
     }
+
     targetOffset  = _getOffset(targetElement);
     tooltipOffset = _getOffset(tooltipLayer);
     windowSize    = _getWinSize();
@@ -780,6 +903,7 @@
    */
   function _disableInteraction() {
     var disableInteractionLayer = document.querySelector('.introjs-disableInteraction');
+
     if (disableInteractionLayer === null) {
       disableInteractionLayer = document.createElement('div');
       disableInteractionLayer.className = 'introjs-disableInteraction';
@@ -808,7 +932,6 @@
    * @param {Object} targetElement
    */
   function _showElement(targetElement) {
-
     if (typeof (this._introChangeCallback) !== 'undefined') {
       this._introChangeCallback.call(this, targetElement.element);
     }
@@ -864,15 +987,13 @@
       }
 
       //remove old classes if the element still exist
-      var oldShowElement = document.querySelector('.introjs-showElement');
-      if(oldShowElement) {
-        oldShowElement.className = oldShowElement.className.replace(/introjs-[a-zA-Z]+/g, '').replace(/^\s+|\s+$/g, '');
-      }
+      _removeShowElement();
 
       //we should wait until the CSS3 transition is competed (it's 0.3 sec) to prevent incorrect `height` and `width` calculation
       if (self._lastShowElementTimer) {
         clearTimeout(self._lastShowElementTimer);
       }
+
       self._lastShowElementTimer = setTimeout(function() {
         //set current step to the label
         if (oldHelperNumberLayer != null) {
@@ -885,9 +1006,10 @@
         _placeTooltip.call(self, targetElement.element, oldtooltipContainer, oldArrowLayer, oldHelperNumberLayer);
 
         //change active bullet
-        oldReferenceLayer.querySelector('.introjs-bullets li > a.active').className = '';
-        oldReferenceLayer.querySelector('.introjs-bullets li > a[data-stepnumber="' + targetElement.step + '"]').className = 'active';
-
+        if (self._options.showBullets) {
+            oldReferenceLayer.querySelector('.introjs-bullets li > a.active').className = '';
+            oldReferenceLayer.querySelector('.introjs-bullets li > a[data-stepnumber="' + targetElement.step + '"]').className = 'active';
+        }
         oldReferenceLayer.querySelector('.introjs-progress .introjs-progressbar').setAttribute('style', 'width:' + _getProgress.call(self) + '%;');
 
         //show the tooltip
@@ -895,15 +1017,19 @@
         if (oldHelperNumberLayer) oldHelperNumberLayer.style.opacity = 1;
 
         //reset button focus
-        if (nextTooltipButton.tabIndex === -1) {
-          //tabindex of -1 means we are at the end of the tour - focus on skip / done
+        if (typeof skipTooltipButton !== "undefined" && skipTooltipButton != null && /introjs-donebutton/gi.test(skipTooltipButton.className)) {
+          // skip button is now "done" button
           skipTooltipButton.focus();
-        } else {
+        } else if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
           //still in the tour, focus on next
           nextTooltipButton.focus();
         }
+
+        // change the scroll of the window, if needed
+        _scrollTo.call(self, targetElement.scrollTo, targetElement, oldtooltipLayer);
       }, 350);
 
+      // end of old element if-else condition
     } else {
       var helperLayer       = document.createElement('div'),
           referenceLayer    = document.createElement('div'),
@@ -1025,10 +1151,6 @@
           self._introCompleteCallback.call(self);
         }
 
-        if (self._introItems.length - 1 != self._currentStep && typeof (self._introExitCallback) === 'function') {
-          self._introExitCallback.call(self);
-        }
-
         _exitIntro.call(self, self._targetElement);
       };
 
@@ -1044,51 +1166,207 @@
 
       //set proper position
       _placeTooltip.call(self, targetElement.element, tooltipLayer, arrowLayer, helperNumberLayer);
+
+      // change the scroll of the window, if needed
+      _scrollTo.call(this, targetElement.scrollTo, targetElement, tooltipLayer);
+
+      //end of new element if-else condition
+    }
+
+    // removing previous disable interaction layer
+    var disableInteractionLayer = self._targetElement.querySelector('.introjs-disableInteraction');
+    if (disableInteractionLayer) {
+      disableInteractionLayer.parentNode.removeChild(disableInteractionLayer);
     }
 
     //disable interaction
-    if (this._options.disableInteraction === true) {
+    if (targetElement.disableInteraction) {
       _disableInteraction.call(self);
     }
 
-    prevTooltipButton.removeAttribute('tabIndex');
-    nextTooltipButton.removeAttribute('tabIndex');
+    if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+      nextTooltipButton.removeAttribute('tabIndex');
+    }
+    if (typeof prevTooltipButton !== "undefined" && prevTooltipButton != null) {
+      prevTooltipButton.removeAttribute('tabIndex');
+    }
 
+    // when it's the first step of tour
     if (this._currentStep == 0 && this._introItems.length > 1) {
-      prevTooltipButton.className = 'introjs-button introjs-prevbutton introjs-disabled';
-      prevTooltipButton.tabIndex = '-1';
-      nextTooltipButton.className = 'introjs-button introjs-nextbutton';
-      skipTooltipButton.innerHTML = this._options.skipLabel;
+      if (typeof skipTooltipButton !== "undefined" && skipTooltipButton != null) {
+        skipTooltipButton.className = 'introjs-button introjs-skipbutton';
+      }
+      if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+        nextTooltipButton.className = 'introjs-button introjs-nextbutton';
+      }
+
+      if (this._options.hidePrev == true) {
+        if (typeof prevTooltipButton !== "undefined" && prevTooltipButton != null) {
+          prevTooltipButton.className = 'introjs-button introjs-prevbutton introjs-hidden';
+        }
+        if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+          nextTooltipButton.className += ' introjs-fullbutton';
+        }
+      } else {
+        if (typeof prevTooltipButton !== "undefined" && prevTooltipButton != null) {
+          prevTooltipButton.className = 'introjs-button introjs-prevbutton introjs-disabled';
+        }
+      }
+
+      if (typeof prevTooltipButton !== "undefined" && prevTooltipButton != null) {
+        prevTooltipButton.tabIndex = '-1';
+      }
+      if (typeof skipTooltipButton !== "undefined" && skipTooltipButton != null) {
+        skipTooltipButton.innerHTML = this._options.skipLabel;
+      }
     } else if (this._introItems.length - 1 == this._currentStep || this._introItems.length == 1) {
-      skipTooltipButton.innerHTML = this._options.doneLabel;
-      prevTooltipButton.className = 'introjs-button introjs-prevbutton';
-      nextTooltipButton.className = 'introjs-button introjs-nextbutton introjs-disabled';
-      nextTooltipButton.tabIndex = '-1';
+      // last step of tour
+      if (typeof skipTooltipButton !== "undefined" && skipTooltipButton != null) {
+        skipTooltipButton.innerHTML = this._options.doneLabel;
+        // adding donebutton class in addition to skipbutton
+        skipTooltipButton.className += ' introjs-donebutton';
+      }
+      if (typeof prevTooltipButton !== "undefined" && prevTooltipButton != null) {
+        prevTooltipButton.className = 'introjs-button introjs-prevbutton';
+      }
+
+      if (this._options.hideNext == true) {
+        if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+          nextTooltipButton.className = 'introjs-button introjs-nextbutton introjs-hidden';
+        }
+        if (typeof prevTooltipButton !== "undefined" && prevTooltipButton != null) {
+          prevTooltipButton.className += ' introjs-fullbutton';
+        }
+      } else {
+        if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+          nextTooltipButton.className = 'introjs-button introjs-nextbutton introjs-disabled';
+        }
+      }
+
+      if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+        nextTooltipButton.tabIndex = '-1';
+      }
     } else {
-      prevTooltipButton.className = 'introjs-button introjs-prevbutton';
-      nextTooltipButton.className = 'introjs-button introjs-nextbutton';
-      skipTooltipButton.innerHTML = this._options.skipLabel;
+      // steps between start and end
+      if (typeof skipTooltipButton !== "undefined" && skipTooltipButton != null) {
+        skipTooltipButton.className = 'introjs-button introjs-skipbutton';
+      }
+      if (typeof prevTooltipButton !== "undefined" && prevTooltipButton != null) {
+        prevTooltipButton.className = 'introjs-button introjs-prevbutton';
+      }
+      if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+        nextTooltipButton.className = 'introjs-button introjs-nextbutton';
+      }
+      if (typeof skipTooltipButton !== "undefined" && skipTooltipButton != null) {
+        skipTooltipButton.innerHTML = this._options.skipLabel;
+      }
     }
 
     //Set focus on "next" button, so that hitting Enter always moves you onto the next step
-    nextTooltipButton.focus();
+    if (typeof nextTooltipButton !== "undefined" && nextTooltipButton != null) {
+      nextTooltipButton.focus();
+    }
 
-    //add target element position style
-    targetElement.element.className += ' introjs-showElement';
+    _setShowElement(targetElement);
+
+    if (typeof (this._introAfterChangeCallback) !== 'undefined') {
+      this._introAfterChangeCallback.call(this, targetElement.element);
+    }
+  }
+
+  /**
+   * To change the scroll of `window` after highlighting an element
+   *
+   * @api private
+   * @method _scrollTo
+   * @param {String} scrollTo
+   * @param {Object} targetElement
+   * @param {Object} tooltipLayer
+   */
+  function _scrollTo(scrollTo, targetElement, tooltipLayer) {
+    if (!this._options.scrollToElement) return;
+
+    if (scrollTo === 'tooltip') {
+      var rect = tooltipLayer.getBoundingClientRect();
+    } else {
+      var rect = targetElement.element.getBoundingClientRect();
+    }
+
+    if (!_elementInViewport(targetElement.element)) {
+      var winHeight = _getWinSize().height;
+      var top = rect.bottom - (rect.bottom - rect.top);
+      var bottom = rect.bottom - winHeight;
+
+      // TODO (afshinm): do we need scroll padding now?
+      // I have changed the scroll option and now it scrolls the window to
+      // the center of the target element or tooltip.
+
+      if (top < 0 || targetElement.element.clientHeight > winHeight) {
+        window.scrollBy(0, rect.top - ((winHeight / 2) -  (rect.height / 2)) - this._options.scrollPadding); // 30px padding from edge to look nice
+
+      //Scroll down
+      } else {
+        window.scrollBy(0, rect.top - ((winHeight / 2) -  (rect.height / 2)) + this._options.scrollPadding); // 30px padding from edge to look nice
+      }
+    }
+  }
+
+  /**
+   * To remove all show element(s)
+   *
+   * @api private
+   * @method _removeShowElement
+   */
+  function _removeShowElement() {
+    var elms = document.querySelectorAll('.introjs-showElement');
+
+    for (var i = 0, l = elms.length; i < l; i++) {
+      var elm = elms[i];
+      _removeClass(elm, /introjs-[a-zA-Z]+/g);
+    }
+  }
+
+  /**
+   * To set the show element
+   * This function set a relative (in most cases) position and changes the z-index
+   *
+   * @api private
+   * @method _setShowElement
+   * @param {Object} targetElement
+   */
+  function _setShowElement(targetElement) {
+    // we need to add this show element class to the parent of SVG elements
+    // because the SVG elements can't have independent z-index
+    if (targetElement.element instanceof SVGElement) {
+      var parentElm = targetElement.element.parentNode;
+
+      while (targetElement.element.parentNode != null) {
+        if (!parentElm.tagName || parentElm.tagName.toLowerCase() === 'body') break;
+
+        if (parentElm.tagName.toLowerCase() === 'svg') {
+          _setClass(parentElm, 'introjs-showElement introjs-relativePosition');
+        }
+
+        parentElm = parentElm.parentNode;
+      }
+    }
+
+    _setClass(targetElement.element, 'introjs-showElement');
 
     var currentElementPosition = _getPropValue(targetElement.element, 'position');
     if (currentElementPosition !== 'absolute' &&
         currentElementPosition !== 'relative' &&
         currentElementPosition !== 'fixed') {
       //change to new intro item
-      targetElement.element.className += ' introjs-relativePosition';
+      //targetElement.element.className += ' introjs-relativePosition';
+      _setClass(targetElement.element, 'introjs-relativePosition')
     }
 
     var parentElm = targetElement.element.parentNode;
     while (parentElm != null) {
-      if (parentElm.tagName.toLowerCase() === 'body') break;
+      if (!parentElm.tagName || parentElm.tagName.toLowerCase() === 'body') break;
 
-      //fix The Stacking Contenxt problem.
+      //fix The Stacking Context problem.
       //More detail: https://developer.mozilla.org/en-US/docs/Web/Guide/CSS/Understanding_z_index/The_stacking_context
       var zIndex = _getPropValue(parentElm, 'z-index');
       var opacity = parseFloat(_getPropValue(parentElm, 'opacity'));
@@ -1099,25 +1377,25 @@
 
       parentElm = parentElm.parentNode;
     }
+  }
 
-    if (!_elementInViewport(targetElement.element) && this._options.scrollToElement === true) {
-      var rect = targetElement.element.getBoundingClientRect(),
-        winHeight = _getWinSize().height,
-        top = rect.bottom - (rect.bottom - rect.top),
-        bottom = rect.bottom - winHeight;
+  function _setClass(element, className) {
+    if (element instanceof SVGElement) {
+      var pre = element.getAttribute('class') || '';
 
-      //Scroll up
-      if (top < 0 || targetElement.element.clientHeight > winHeight) {
-        window.scrollBy(0, top - this._options.scrollPadding); // 30px padding from edge to look nice
-
-      //Scroll down
-      } else {
-        window.scrollBy(0, bottom + 70 + this._options.scrollPadding); // 70px + 30px padding from edge to look nice
-      }
+      element.setAttribute('class', pre + ' ' + className);
+    } else {
+      element.className += ' ' + className;
     }
+  }
 
-    if (typeof (this._introAfterChangeCallback) !== 'undefined') {
-      this._introAfterChangeCallback.call(this, targetElement.element);
+  function _removeClass(element, classNameRegex) {
+    if (element instanceof SVGElement) {
+      var pre = element.getAttribute('class') || '';
+
+      element.setAttribute('class', pre.replace(classNameRegex, '').replace(/^\s+|\s+$/g, ''));
+    } else {
+      element.className = element.className.replace(classNameRegex, '').replace(/^\s+|\s+$/g, '');
     }
   }
 
@@ -1145,7 +1423,7 @@
     } else {
       return propValue;
     }
-  };
+  }
 
   /**
    * Checks to see if target element (or parents) position is fixed or not
@@ -1158,7 +1436,7 @@
   function _isFixed (element) {
     var p = element.parentNode;
 
-    if (p.nodeName === 'HTML') {
+    if (!p || p.nodeName === 'HTML') {
       return false;
     }
 
@@ -1167,7 +1445,7 @@
     }
 
     return _isFixed(p);
-  };
+  }
 
   /**
    * Provides a cross-browser way to get the screen dimensions
@@ -1221,7 +1499,7 @@
     overlayLayer.className = 'introjs-overlay';
 
     //check if the target element is body, we should calculate the size of overlay layer in a better way
-    if (targetElm.tagName.toLowerCase() === 'body') {
+    if (!targetElm.tagName || targetElm.tagName.toLowerCase() === 'body') {
       styleText += 'top: 0;bottom: 0; left: 0;right: 0;position: fixed;';
       overlayLayer.setAttribute('style', styleText);
     } else {
@@ -1237,11 +1515,6 @@
 
     overlayLayer.onclick = function() {
       if (self._options.exitOnOverlayClick == true) {
-
-        //check if any callback is defined
-        if (self._introExitCallback != undefined) {
-          self._introExitCallback.call(self);
-        }
         _exitIntro.call(self, targetElm);
       }
     };
@@ -1252,7 +1525,7 @@
     }, 10);
 
     return true;
-  };
+  }
 
   /**
    * Removes open hint (tooltip hint)
@@ -1268,7 +1541,7 @@
       tooltip.parentNode.removeChild(tooltip);
       return step;
     }
-  };
+  }
 
   /**
    * Start parsing hint items
@@ -1279,7 +1552,7 @@
    */
   function _populateHints(targetElm) {
     var self = this;
-    this._introItems = []
+    this._introItems = [];
 
     if (this._options.hints) {
       for (var i = 0, l = this._options.hints.length; i < l; i++) {
@@ -1339,7 +1612,7 @@
       document.attachEvent('onclick', _removeHintTooltip.bind(this));
       document.attachEvent('onresize', _reAlignHints.bind(this));
     }
-  };
+  }
 
   /**
    * Re-aligns all hint elements
@@ -1375,7 +1648,7 @@
     if (typeof (this._hintCloseCallback) !== 'undefined') {
       this._hintCloseCallback.call(this, stepId);
     }
-  };
+  }
 
   /**
    * Hide all hints
@@ -1390,6 +1663,71 @@
       for (var i = 0; i < hints.length; i++) {
         _hideHint.call(this, hints[i].getAttribute('data-step'));
       }
+    }
+  }
+
+  /**
+   * Show all hints
+   *
+   * @api private
+   * @method _showHints
+   */
+  function _showHints() {
+    var hints = this._targetElement.querySelectorAll('.introjs-hint');
+
+    if (hints && hints.length > 0) {
+      for (var i = 0; i < hints.length; i++) {
+        _showHint.call(this, hints[i].getAttribute('data-step'));
+      }
+    } else {
+      _populateHints.call(this, this._targetElement);
+    }
+  };
+
+  /**
+   * Show a hint
+   *
+   * @api private
+   * @method _showHint
+   */
+  function _showHint(stepId) {
+    var hint = this._targetElement.querySelector('.introjs-hint[data-step="' + stepId + '"]');
+
+    if (hint) {
+      hint.className = hint.className.replace(/introjs\-hidehint/g, '');
+    }
+  };
+
+  /**
+   * Removes all hint elements on the page
+   * Useful when you want to destroy the elements and add them again (e.g. a modal or popup)
+   *
+   * @api private
+   * @method _removeHints
+   */
+  function _removeHints() {
+    var hints = this._targetElement.querySelectorAll('.introjs-hint');
+
+    if (hints && hints.length > 0) {
+      for (var i = 0; i < hints.length; i++) {
+        _removeHint.call(this, hints[i].getAttribute('data-step'));
+      }
+    }
+  };
+
+  /**
+   * Remove one single hint element from the page
+   * Useful when you want to destroy the element and add them again (e.g. a modal or popup)
+   * Use removeHints if you want to remove all elements.
+   *
+   * @api private
+   * @method _removeHint
+   */
+  function _removeHint(stepId) {
+    var hint = this._targetElement.querySelector('.introjs-hint[data-step="' + stepId + '"]');
+
+    if (hint) {
+      hint.parentNode.removeChild(hint);
     }
   };
 
@@ -1428,7 +1766,7 @@
           if (evt.stopPropagation)    evt.stopPropagation();
           if (evt.cancelBubble != null) evt.cancelBubble = true;
 
-          _hintClick.call(self, hint, item, i);
+          _showHintDialog.call(self, i);
         };
       }(hint, item, i));
 
@@ -1470,7 +1808,7 @@
     if (typeof (this._hintsAddedCallback) !== 'undefined') {
       this._hintsAddedCallback.call(this);
     }
-  };
+  }
 
   /**
    * Aligns hint position
@@ -1484,6 +1822,8 @@
   function _alignHintPosition(position, hint, element) {
     // get/calculate offset of target element
     var offset = _getOffset.call(this, element);
+    var iconWidth = 20;
+    var iconHeight = 20;
 
     // align the hint element
     switch (position) {
@@ -1493,38 +1833,51 @@
         hint.style.top = offset.top + 'px';
         break;
       case 'top-right':
-        hint.style.left = (offset.left + offset.width) + 'px';
+        hint.style.left = (offset.left + offset.width - iconWidth) + 'px';
         hint.style.top = offset.top + 'px';
         break;
       case 'bottom-left':
         hint.style.left = offset.left + 'px';
-        hint.style.top = (offset.top + offset.height) + 'px';
+        hint.style.top = (offset.top + offset.height - iconHeight) + 'px';
         break;
       case 'bottom-right':
-        hint.style.left = (offset.left + offset.width) + 'px';
-        hint.style.top = (offset.top + offset.height) + 'px';
+        hint.style.left = (offset.left + offset.width - iconWidth) + 'px';
+        hint.style.top = (offset.top + offset.height - iconHeight) + 'px';
+        break;
+      case 'middle-left':
+        hint.style.left = offset.left + 'px';
+        hint.style.top = (offset.top + (offset.height - iconHeight) / 2) + 'px';
+        break;
+      case 'middle-right':
+        hint.style.left = (offset.left + offset.width - iconWidth) + 'px';
+        hint.style.top = (offset.top + (offset.height - iconHeight) / 2) + 'px';
+        break;
+      case 'middle-middle':
+        hint.style.left = (offset.left + (offset.width - iconWidth) / 2) + 'px';
+        hint.style.top = (offset.top + (offset.height - iconHeight) / 2) + 'px';
         break;
       case 'bottom-middle':
-        hint.style.left = (offset.left + (offset.width / 2)) + 'px';
-        hint.style.top = (offset.top + offset.height) + 'px';
+        hint.style.left = (offset.left + (offset.width - iconWidth) / 2) + 'px';
+        hint.style.top = (offset.top + offset.height - iconHeight) + 'px';
         break;
       case 'top-middle':
-        hint.style.left = (offset.left + (offset.width / 2)) + 'px';
+        hint.style.left = (offset.left + (offset.width - iconWidth) / 2) + 'px';
         hint.style.top = offset.top + 'px';
         break;
     }
-  };
+  }
 
   /**
    * Triggers when user clicks on the hint element
    *
    * @api private
-   * @method _hintClick
-   * @param {Object} hintElement
-   * @param {Object} item
+   * @method _showHintDialog
    * @param {Number} stepId
    */
-  function _hintClick(hintElement, item, stepId) {
+  function _showHintDialog(stepId) {
+    var hintElement = document.querySelector('.introjs-hint[data-step="' + stepId + '"]');
+    var item = this._introItems[stepId];
+
     // call the callback function (if any)
     if (typeof (this._hintClickCallback) !== 'undefined') {
       this._hintClickCallback.call(this, hintElement, item, stepId);
@@ -1587,7 +1940,7 @@
 
     //set proper position
     _placeTooltip.call(this, hintElement, tooltipLayer, arrowLayer, null, true);
-  };
+  }
 
   /**
    * Get an element position on the page
@@ -1601,27 +1954,41 @@
   function _getOffset(element) {
     var elementPosition = {};
 
-    //set width
-    elementPosition.width = element.offsetWidth;
+    var body = document.body;
+    var docEl = document.documentElement;
 
-    //set height
-    elementPosition.height = element.offsetHeight;
+    var scrollTop = window.pageYOffset || docEl.scrollTop || body.scrollTop;
+    var scrollLeft = window.pageXOffset || docEl.scrollLeft || body.scrollLeft;
 
-    //calculate element top and left
-    var _x = 0;
-    var _y = 0;
-    while (element && !isNaN(element.offsetLeft) && !isNaN(element.offsetTop)) {
-      _x += element.offsetLeft;
-      _y += element.offsetTop;
-      element = element.offsetParent;
+    if (element instanceof SVGElement) {
+      var x = element.getBoundingClientRect()
+      elementPosition.top = x.top + scrollTop;
+      elementPosition.width = x.width;
+      elementPosition.height = x.height;
+      elementPosition.left = x.left + scrollLeft;
+    } else {
+      //set width
+      elementPosition.width = element.offsetWidth;
+
+      //set height
+      elementPosition.height = element.offsetHeight;
+
+      //calculate element top and left
+      var _x = 0;
+      var _y = 0;
+      while (element && !isNaN(element.offsetLeft) && !isNaN(element.offsetTop)) {
+        _x += element.offsetLeft;
+        _y += element.offsetTop;
+        element = element.offsetParent;
+      }
+      //set top
+      elementPosition.top = _y;
+      //set left
+      elementPosition.left = _x;
     }
-    //set top
-    elementPosition.top = _y;
-    //set left
-    elementPosition.left = _x;
 
     return elementPosition;
-  };
+  }
 
   /**
    * Gets the current progress percentage
@@ -1634,7 +2001,7 @@
     // Steps are 0 indexed
     var currentStep = parseInt((this._currentStep + 1), 10);
     return ((currentStep / this._introItems.length) * 100);
-  };
+  }
 
   /**
    * Overwrites obj1's values with obj2's and adds obj2's if non existent in obj1
@@ -1649,7 +2016,7 @@
     for (var attrname in obj1) { obj3[attrname] = obj1[attrname]; }
     for (var attrname in obj2) { obj3[attrname] = obj2[attrname]; }
     return obj3;
-  };
+  }
 
   var introJs = function (targetElm) {
     if (typeof (targetElm) === 'object') {
@@ -1700,6 +2067,29 @@
       _goToStep.call(this, step);
       return this;
     },
+    addStep: function(options) {
+      if (!this._options.steps) {
+        this._options.steps = [];
+      }
+
+      this._options.steps.push(options);
+
+      return this;
+    },
+    addSteps: function(steps) {
+      if (!steps.length) return;
+
+      for(var index = 0; index < steps.length; index++) {
+        this.addStep(steps[index]);
+      }
+
+      return this;
+    },
+    goToStepNumber: function(step) {
+      _goToStepNumber.call(this, step);
+
+      return this;
+    },
     nextStep: function() {
       _nextStep.call(this);
       return this;
@@ -1708,17 +2098,12 @@
       _previousStep.call(this);
       return this;
     },
-    exit: function() {
-      _exitIntro.call(this, this._targetElement);
+    exit: function(force) {
+      _exitIntro.call(this, this._targetElement, force);
       return this;
     },
     refresh: function() {
-      // re-align intros
-      _setHelperLayerPosition.call(this, document.querySelector('.introjs-helperLayer'));
-      _setHelperLayerPosition.call(this, document.querySelector('.introjs-tooltipReferenceLayer'));
-
-      //re-align hints
-      _reAlignHints.call(this);
+      _refresh.call(this);
       return this;
     },
     onbeforechange: function(providedCallback) {
@@ -1785,6 +2170,14 @@
       }
       return this;
     },
+    onbeforeexit: function(providedCallback) {
+      if (typeof (providedCallback) === 'function') {
+        this._introBeforeExitCallback = providedCallback;
+      } else {
+        throw new Error('Provided callback for onbeforeexit was not a function.');
+      }
+      return this;
+    },
     addHints: function() {
       _populateHints.call(this, this._targetElement);
       return this;
@@ -1795,6 +2188,26 @@
     },
     hideHints: function () {
       _hideHints.call(this);
+      return this;
+    },
+    showHint: function (stepId) {
+      _showHint.call(this, stepId);
+      return this;
+    },
+    showHints: function () {
+      _showHints.call(this);
+      return this;
+    },
+    removeHints: function () {
+      _removeHints.call(this);
+      return this;
+    },
+    removeHint: function (stepId) {
+      _removeHint.call(this, stepId);
+      return this;
+    },
+    showHintDialog: function (stepId) {
+      _showHintDialog.call(this, stepId);
       return this;
     }
   };

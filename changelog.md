@@ -1,5 +1,48 @@
 ## Release History
 
+ * **v2.8.0-alpha.1** - 2017-08-30
+   - Enabling `onbeforechange` to return bool and prevent the next step to display
+   - Updating disable interaction layer after window resize
+   - Fixing disable interaction layer z-index issue
+
+ * **v2.7.0** - 2017-08-17
+   - Added `onbeforeexit` callback
+   - Added `force` parameter to `exit()`
+   - Added Code of Conduct and Contributing guide files
+
+ * **v2.6.0** - 2017-07-29
+   - Per step disable interaction
+   - Adding `scrollTo` option 
+   - Better scrolling method
+   - Fixing pulse animation issue on IE
+   - Adding a new method to show the popup of specific hint
+   - Fixing build script
+   - Some minor bug fixes
+
+ * **v2.5.0** - 2017-03-22
+   - SVG support
+   - Adding new function: `goToStepNumber`, `removeHint`, `removeHits`
+   - Adding new positions for hints
+   - Adding library to Yarn
+   - Fixing documentation
+   - and many minor bug fixes + refactoring
+
+ * **v2.4.0** - 2016-12-11
+   - New documentation
+   - New template: Modern
+   - Added showHint and showHints
+   - Added Dart and R wrappers
+   - Minor bug fixes and coding style issues
+
+ * **v2.3.0** - 2016-07-01
+   - Fixing the conflict with Bootstrap 3
+   - Adding two new options to hide next and previous button in first and last steps
+   - Add web components compatibility (polymer)
+   - Removing `position: absolute` from parent fix class
+   - Fixing typo in hint pulse class
+   - Adding a Bootstrap 3 example + different positions example
+   - and some minor bug fixes.
+
  * **v2.1.0** - 2016-04-20
    - Removed javascript:void hrefs in order to support CSP
    - Add hideHint function to public api
